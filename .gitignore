@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+# rendered output
+*.mp4
+*.avi
+*.mkv
+
+# saved ui choices, local to each machine
+typewriter_settings.json
+
+.venv/
+venv/
+.vscode/
+.idea/
