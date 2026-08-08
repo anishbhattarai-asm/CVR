@@ -7,6 +7,7 @@ import math
 import re
 import os
 import platform
+import shutil
 import subprocess
 import time
 import threading
@@ -35,6 +36,9 @@ FINAL_PAUSE_SECONDS = 2.0
 SETTINGS_FILE       = os.path.join(                 # next to this script, so
     os.path.dirname(os.path.abspath(__file__)),     # settings survive being
     "typewriter_settings.json")                     # launched from anywhere
+
+ASK_EACH_TIME  = "Ask each time"     # player_choice value: pop the chooser
+TOAST_SECONDS  = 25                  # how long the "render complete" card sits
 
 def _h(hex_str: str) -> Tuple[int, int, int]:
     h = hex_str.lstrip("#")
@@ -1253,6 +1257,357 @@ class CodeTypewriterVideoRenderer:
             return False
 
 
+class Player:
+    """One way to play a file: the OS default, an .exe, or a macOS .app."""
+
+    __slots__ = ("name", "kind", "target")
+
+    def __init__(self, name: str, kind: str, target: str = ""):
+        self.name   = name          # what the user sees
+        self.kind   = kind          # "default" | "exe" | "app"
+        self.target = target        # path to the exe / .app ("" for default)
+
+    def launch(self, path: str):
+        path = os.path.abspath(path)
+        if self.kind == "exe":
+            subprocess.Popen([self.target, path])
+        elif self.kind == "app":
+            subprocess.Popen(["open", "-a", self.target, path])
+        elif platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+
+    def as_dict(self) -> dict:
+        return {"name": self.name, "kind": self.kind, "target": self.target}
+
+    @staticmethod
+    def from_dict(d) -> Optional["Player"]:
+        try:
+            kind = d["kind"]
+            target = d.get("target", "")
+        except (TypeError, KeyError):
+            return None
+        if kind in ("exe", "app") and not os.path.exists(target):
+            return None                     # player was uninstalled or moved
+        return Player(d.get("name") or os.path.basename(target) or "System default",
+                      kind, target)
+
+
+def _win_app_paths(exe: str) -> Optional[str]:
+    """Ask the registry where an installer put exe, e.g. 'vlc.exe'."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\\" + exe
+    for root_key in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for flag in (0, getattr(winreg, "KEY_WOW64_32KEY", 0)):
+            try:
+                with winreg.OpenKey(root_key, key, 0,
+                                    winreg.KEY_READ | flag) as k:
+                    val = winreg.QueryValueEx(k, "")[0].strip('"')
+                if val and os.path.exists(val):
+                    return val
+            except OSError:
+                continue
+    return None
+
+
+def discover_players() -> List[Player]:
+    """Video players installed on this machine, default first.
+
+    Nothing here is required: an empty list still leaves "System default",
+    which is what the app did before the chooser existed.
+    """
+    players = [Player("System default", "default")]
+    seen = set()
+
+    def add(name: str, path: Optional[str], kind: str = "exe"):
+        if not path:
+            return
+        key = os.path.normcase(path)
+        if key in seen or not os.path.exists(path):
+            return
+        seen.add(key)
+        players.append(Player(name, kind, path))
+
+    system = platform.system()
+    if system == "Windows":
+        pf   = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        candidates = [
+            ("VLC media player", ["vlc.exe"],
+             [rf"{pf}\VideoLAN\VLC\vlc.exe", rf"{pf86}\VideoLAN\VLC\vlc.exe"]),
+            ("mpv", ["mpv.exe"], []),
+            ("MPC-HC", ["mpc-hc64.exe", "mpc-hc.exe"],
+             [rf"{pf}\MPC-HC\mpc-hc64.exe", rf"{pf86}\MPC-HC\mpc-hc.exe",
+              rf"{pf}\MPC-HC64\mpc-hc64.exe",
+              rf"{pf86}\K-Lite Codec Pack\MPC-HC64\mpc-hc64.exe"]),
+            ("PotPlayer", ["potplayermini64.exe"],
+             [rf"{pf}\DAUM\PotPlayer\PotPlayerMini64.exe",
+              rf"{pf86}\DAUM\PotPlayer\PotPlayerMini.exe"]),
+            ("KMPlayer", ["kmplayer64.exe"],
+             [rf"{pf86}\The KMPlayer\KMPlayer.exe"]),
+            ("Windows Media Player", [],
+             [rf"{pf86}\Windows Media Player\wmplayer.exe",
+              rf"{pf}\Windows Media Player\wmplayer.exe"]),
+            ("ffplay", ["ffplay.exe"], []),
+        ]
+        for name, exes, paths in candidates:
+            found = None
+            for exe in exes:
+                found = _win_app_paths(exe) or shutil.which(exe)
+                if found:
+                    break
+            for p in ([found] if found else []) + paths:
+                if p and os.path.exists(p):
+                    add(name, p)
+                    break
+        if local:
+            add("Windows Terminal-installed mpv",
+                os.path.join(local, "Microsoft", "WindowsApps", "mpv.exe"))
+    elif system == "Darwin":
+        for name, app in [("VLC media player", "/Applications/VLC.app"),
+                          ("IINA", "/Applications/IINA.app"),
+                          ("mpv", "/Applications/mpv.app"),
+                          ("QuickTime Player",
+                           "/System/Applications/QuickTime Player.app")]:
+            add(name, app, kind="app")
+        for name, exe in [("mpv (command line)", "mpv"), ("ffplay", "ffplay")]:
+            add(name, shutil.which(exe))
+    else:
+        for name, exe in [("VLC media player", "vlc"), ("mpv", "mpv"),
+                          ("SMPlayer", "smplayer"), ("Celluloid", "celluloid"),
+                          ("MPlayer", "mplayer"), ("Totem", "totem"),
+                          ("Haruna", "haruna"), ("ffplay", "ffplay")]:
+            add(name, shutil.which(exe))
+    return players
+
+
+class Toast:
+    """Small click-me card in the bottom-right corner.
+
+    Deliberately not a messagebox: a modal dialog steals focus from whatever
+    the user moved on to while the render ran.  This one waits to be clicked
+    and gives up after TOAST_SECONDS.
+    """
+
+    def __init__(self, root: tk.Tk, title: str, body: str, hint: str,
+                 on_click, palette=None):
+        self.root     = root
+        self.on_click = on_click
+        self._fade    = None
+        self._timer   = None
+
+        pal = palette or DEFAULT_PALETTE
+        bg     = "#%02X%02X%02X" % pal.bg
+        fg     = "#%02X%02X%02X" % pal.fg
+        accent = "#%02X%02X%02X" % pal.function
+        muted  = "#%02X%02X%02X" % pal.comment
+
+        self.win = tk.Toplevel(root)
+        self.win.withdraw()
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        try:
+            self.win.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+
+        outer = tk.Frame(self.win, bg=accent, padx=1, pady=1)
+        outer.pack(fill=tk.BOTH, expand=True)
+        card = tk.Frame(outer, bg=bg, padx=16, pady=12)
+        card.pack(fill=tk.BOTH, expand=True)
+
+        head = tk.Frame(card, bg=bg)
+        head.pack(fill=tk.X)
+        tk.Label(head, text=title, bg=bg, fg=accent,
+                 font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+        close = tk.Label(head, text="✕", bg=bg, fg=muted,
+                         font=("Segoe UI", 10), cursor="hand2")
+        close.pack(side=tk.RIGHT)
+        close.bind("<Button-1>", lambda _e: self.close())
+
+        tk.Label(card, text=body, bg=bg, fg=fg, justify=tk.LEFT,
+                 wraplength=330, font=("Segoe UI", 9)).pack(
+                     anchor=tk.W, pady=(6, 2))
+        tk.Label(card, text=hint, bg=bg, fg=muted, justify=tk.LEFT,
+                 font=("Segoe UI", 9, "italic")).pack(anchor=tk.W)
+
+        for w in [self.win, outer, card] + list(card.winfo_children()):
+            if w is close:
+                continue
+            w.bind("<Button-1>", self._clicked)
+            try:
+                w.config(cursor="hand2")
+            except tk.TclError:
+                pass
+        for w in head.winfo_children():
+            if w is not close:
+                w.bind("<Button-1>", self._clicked)
+
+        self.win.update_idletasks()
+        w = max(300, self.win.winfo_reqwidth())
+        h = self.win.winfo_reqheight()
+        x = self.root.winfo_screenwidth() - w - 24
+        y = self.root.winfo_screenheight() - h - 80
+        self.win.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        self.win.deiconify()
+        self._fade_in(0.0)
+        self._timer = self.root.after(TOAST_SECONDS * 1000, self.close)
+
+    def _fade_in(self, alpha: float):
+        if not self._alive():
+            return
+        try:
+            self.win.attributes("-alpha", min(alpha, 0.97))
+        except tk.TclError:
+            return
+        if alpha < 0.97:
+            self._fade = self.root.after(15, self._fade_in, alpha + 0.12)
+
+    def _alive(self) -> bool:
+        try:
+            return bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _clicked(self, _event=None):
+        callback = self.on_click
+        self.close()
+        if callback:
+            callback()
+
+    def close(self):
+        for job in (self._fade, self._timer):
+            if job:
+                try:
+                    self.root.after_cancel(job)
+                except (tk.TclError, ValueError):
+                    pass
+        self._fade = self._timer = None
+        if self._alive():
+            try:
+                self.win.destroy()
+            except tk.TclError:
+                pass
+
+
+class PlayerChooser:
+    """Modal 'open this video with…' list.  Returns (Player, remember)."""
+
+    def __init__(self, parent: tk.Misc, players: List[Player],
+                 video_path: str, preselect: Optional[Player] = None):
+        self.players  = list(players)
+        self.result: Optional[Player] = None
+        self.remember = tk.BooleanVar(value=False)
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("Open video with…")
+        self.win.transient(parent.winfo_toplevel())
+        self.win.resizable(False, False)
+        self.win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        frame = ttk.Frame(self.win, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Play the rendered video with",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
+        ttk.Label(frame, text=os.path.basename(video_path),
+                  font=("Segoe UI", 8)).pack(anchor=tk.W, pady=(0, 8))
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox = tk.Listbox(list_frame, height=min(9, max(4, len(self.players))),
+                                  width=42, activestyle="dotbox",
+                                  exportselection=False,
+                                  yscrollcommand=scroll.set)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.config(command=self.listbox.yview)
+        self._fill_list(preselect)
+        self.listbox.bind("<Double-Button-1>", lambda _e: self._open())
+        self.listbox.bind("<Return>", lambda _e: self._open())
+
+        ttk.Checkbutton(frame, text="Always use this player (skip this dialog)",
+                        variable=self.remember).pack(anchor=tk.W, pady=(10, 0))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(buttons, text="Browse…", command=self._browse).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="▶  Open", command=self._open).pack(
+            side=tk.RIGHT, padx=(0, 8))
+
+        self.win.bind("<Escape>", lambda _e: self._cancel())
+        self.win.update_idletasks()
+        top = parent.winfo_toplevel()
+        x = top.winfo_rootx() + (top.winfo_width() - self.win.winfo_width()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - self.win.winfo_height()) // 3
+        self.win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.win.grab_set()
+        self.listbox.focus_set()
+
+    def _fill_list(self, preselect: Optional[Player]):
+        self.listbox.delete(0, tk.END)
+        for p in self.players:
+            self.listbox.insert(tk.END, p.name)
+        index = 0
+        if preselect:
+            for i, p in enumerate(self.players):
+                if p.kind == preselect.kind and (
+                        p.target == preselect.target or p.name == preselect.name):
+                    index = i
+                    break
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+
+    def _browse(self):
+        if platform.system() == "Windows":
+            types = [("Programs", "*.exe"), ("All files", "*.*")]
+        else:
+            types = [("All files", "*.*")]
+        path = filedialog.askopenfilename(parent=self.win,
+                                          title="Pick a video player",
+                                          filetypes=types)
+        if not path:
+            return
+        kind = "app" if path.endswith(".app") else "exe"
+        name = os.path.splitext(os.path.basename(path.rstrip("/\\")))[0]
+        player = Player(name, kind, path)
+        self.players.append(player)
+        self._fill_list(player)
+
+    def _open(self):
+        sel = self.listbox.curselection()
+        self.result = self.players[sel[0]] if sel else self.players[0]
+        self._destroy()
+
+    def _cancel(self):
+        self.result = None
+        self._destroy()
+
+    def _destroy(self):
+        try:
+            self.win.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+    def show(self) -> Tuple[Optional[Player], bool]:
+        self.win.wait_window()
+        return self.result, bool(self.remember.get())
+
+
 class TypewriterVideoApp:
 
     def __init__(self, root: tk.Tk):
@@ -1296,6 +1651,17 @@ class TypewriterVideoApp:
         self._render_error        = None
         self._closing             = False
         self._preview_size        = (0, 0)
+        self._toast               = None
+
+        # Which player opens the finished video.  `None` means "ask", i.e.
+        # the notification opens the chooser.
+        try:
+            self.players = discover_players()
+        except Exception as exc:
+            print(f"Player discovery failed: {exc}")
+            self.players = [Player("System default", "default")]
+        self.preferred_player: Optional[Player] = None
+        self.player_choice_var = tk.StringVar(value=ASK_EACH_TIME)
 
         # Every theme VS Code has locally, plus the bundled fallback.
         self.themes: List[Tuple[str, str]] = [(DEFAULT_PALETTE.name, "")]
@@ -1391,6 +1757,8 @@ class TypewriterVideoApp:
             self.filename_bar_var.set(s.get("filename_bar", True))
             self.instant_indent_var.set(s.get("instant_indent", True))
             self.exact_colour_var.set(s.get("exact_colour", False))
+            self.auto_open_var.set(s.get("auto_open", True))
+            self._set_preferred_player(Player.from_dict(s.get("player")))
             saved_theme = s.get("theme")
             if saved_theme and saved_theme in [n for n, _ in self.themes]:
                 self.theme_var.set(saved_theme)
@@ -1411,6 +1779,9 @@ class TypewriterVideoApp:
                 "filename_bar":    self.filename_bar_var.get(),
                 "instant_indent":  self.instant_indent_var.get(),
                 "exact_colour":    self.exact_colour_var.get(),
+                "auto_open":       self.auto_open_var.get(),
+                "player": (self.preferred_player.as_dict()
+                           if self.preferred_player else None),
             }
             with open(SETTINGS_FILE, "w") as fh:
                 json.dump(s, fh, indent=2)
@@ -1467,8 +1838,22 @@ class TypewriterVideoApp:
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         ttk.Button(f2, text="Browse…", command=self._browse_output).pack(side=tk.RIGHT)
 
-        ttk.Checkbutton(p, text="Open video automatically when done",
+        ttk.Checkbutton(p, text="Notify me when the render is done",
                         variable=self.auto_open_var).pack(anchor=tk.W, pady=8)
+
+        ttk.Label(p, text="Play with", font=("Arial", 10, "bold")).pack(
+            anchor=tk.W, pady=(6, 4))
+        ttk.Label(p, text="“Ask each time” lets the notification open the "
+                          "player chooser.", font=("Arial", 8)).pack(
+                              anchor=tk.W, padx=5)
+        f3 = ttk.Frame(p); f3.pack(fill=tk.X, padx=5, pady=4)
+        self.player_combo = ttk.Combobox(
+            f3, textvariable=self.player_choice_var, state="readonly",
+            values=self._player_choice_values())
+        self.player_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.player_combo.bind("<<ComboboxSelected>>", self._on_player_choice)
+        ttk.Button(f3, text="Browse…", command=self._browse_player).pack(
+            side=tk.RIGHT)
 
     def _tab_theme(self, p):
         ttk.Label(p, text="Colour theme", font=("Arial", 10, "bold")).pack(
@@ -2117,6 +2502,9 @@ class TypewriterVideoApp:
             self.cancel_flag.set()
             self.render_thread.join(timeout=5.0)
         self._closing = True
+        if self._toast:
+            self._toast.close()
+            self._toast = None
         if self._preview_timer:
             try:
                 self.root.after_cancel(self._preview_timer)
@@ -2124,15 +2512,94 @@ class TypewriterVideoApp:
                 pass
         self.root.destroy()
 
-    def _open_output_file(self, result: str):
+    # ---- picking and launching a player -------------------------------
+
+    def _player_choice_values(self) -> List[str]:
+        names = [ASK_EACH_TIME] + [p.name for p in self.players]
+        if self.preferred_player and self.preferred_player.name not in names:
+            names.append(self.preferred_player.name)
+        return names
+
+    def _set_preferred_player(self, player: Optional[Player]):
+        """Remember `player` (None = ask each time) and sync the combobox."""
+        self.preferred_player = player
+        if player and all(p.target != player.target or p.kind != player.kind
+                          for p in self.players):
+            self.players.append(player)
+        self.player_choice_var.set(player.name if player else ASK_EACH_TIME)
+        combo = getattr(self, "player_combo", None)
+        if combo is not None:
+            combo.config(values=self._player_choice_values())
+
+    def _on_player_choice(self, _event=None):
+        name = self.player_choice_var.get()
+        if name == ASK_EACH_TIME:
+            self.preferred_player = None
+            return
+        for p in self.players:
+            if p.name == name:
+                self.preferred_player = p
+                return
+
+    def _browse_player(self):
+        types = ([("Programs", "*.exe"), ("All files", "*.*")]
+                 if platform.system() == "Windows" else [("All files", "*.*")])
+        path = filedialog.askopenfilename(title="Pick a video player",
+                                          filetypes=types)
+        if not path:
+            return
+        kind = "app" if path.endswith(".app") else "exe"
+        name = os.path.splitext(os.path.basename(path.rstrip("/\\")))[0]
+        self._set_preferred_player(Player(name, kind, path))
+
+    def _notify_render_complete(self, result: str):
+        """Corner card instead of a modal box, so it never steals focus."""
+        size_mb = os.path.getsize(result) / (1024 * 1024)
+        target = (self.preferred_player.name if self.preferred_player
+                  else "choose a player")
+        if self._toast:
+            self._toast.close()
         try:
-            sys_name = platform.system()
-            if sys_name == "Windows":
-                os.startfile(os.path.abspath(result))
-            elif sys_name == "Darwin":
-                subprocess.call(["open", os.path.abspath(result)])
-            else:
-                subprocess.call(["xdg-open", os.path.abspath(result)])
+            self._toast = Toast(
+                self.root,
+                "Render complete",
+                f"{os.path.basename(result)}  ·  {size_mb:.1f} MB",
+                f"Click to play — {target}",
+                lambda: self._play_result(result),
+                self.palette,
+            )
+        except tk.TclError:
+            self._toast = None
+            if messagebox.askyesno("Render complete",
+                                   f"Video saved:\n{os.path.abspath(result)}"
+                                   "\n\nOpen now?"):
+                self._play_result(result)
+
+    def _play_result(self, result: str):
+        """Notification was clicked: pick a player (or use the saved one)."""
+        if not os.path.exists(result):
+            self._safe_message("error", "Missing file",
+                               f"The video is gone:\n{result}")
+            return
+
+        player = self.preferred_player
+        if player is None:
+            player, remember = PlayerChooser(
+                self.root, self.players, result,
+                preselect=self.preferred_player).show()
+            if player is None:
+                return                      # cancelled: leave the file alone
+            if remember:
+                self._set_preferred_player(player)
+                self._save_settings()
+        self._open_output_file(result, player)
+
+    def _open_output_file(self, result: str, player: Optional[Player] = None):
+        player = player or self.preferred_player or Player("System default",
+                                                           "default")
+        try:
+            player.launch(result)
+            self.status_var.set(f"Playing in {player.name}")
         except OSError as e:
             self._safe_message("info", "Saved", f"Saved to:\n{result}\n\n{e}")
 
@@ -2146,10 +2613,7 @@ class TypewriterVideoApp:
             self.progress_var.set(100)
             self.status_var.set("Done!")
             if self.auto_open_var.get():
-                if messagebox.askyesno(
-                        "Render complete",
-                        f"Video saved:\n{os.path.abspath(result)}\n\nOpen now?"):
-                    self._open_output_file(result)
+                self._notify_render_complete(result)
             else:
                 self._safe_message(
                     "info",
