@@ -45,17 +45,21 @@ def test_source_string_without_a_file(small):
     assert r.output_path.endswith("untitled_typewriter.mp4")
 
 
-def test_frames_match_the_requested_duration(sample_file, small):
-    r = Renderer(sample_file, target_duration=6, **small)
+def test_frames_match_the_requested_duration(sample_file):
+    # Tall enough for the whole sample, so no font scrolls it out of view.
+    r = Renderer(sample_file, target_duration=6, resolution=(480, 360),
+                 fps=10, font_size=12)
     frames = list(r.frames())
     assert abs(len(frames) - r.total_frames()) <= 1
-    assert len(frames) / small["fps"] == pytest.approx(6, abs=0.2)
+    assert len(frames) / r.fps == pytest.approx(6, abs=0.2)
     first, last = frames[0], frames[-1]
-    assert first.shape == (180, 320, 3) and first.dtype == np.uint8
-    # Below the tab, the finished frame has far more ink than the first.
+    assert first.shape == (360, 480, 3) and first.dtype == np.uint8
+    # In the text area, the finished frame has far more ink than the first,
+    # which holds one typed character and the cursor.
     bg = np.array(r.palette.bg, dtype=np.uint8)
-    inked = lambda f: int((f[r._text_y_start:] != bg).any(axis=2).sum())
-    assert inked(last) > inked(first) * 2
+    text_area = lambda f: f[r._text_y_start:, r._text_x_start:r.resolution[0] - r.padding]
+    inked = lambda f: int((text_area(f) != bg).any(axis=2).sum())
+    assert inked(last) > inked(first) * 5
 
 
 def test_long_lines_wrap_to_the_frame(small):
