@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/code-video-renderer/
+      url: https://pypi.org/project/pycvr/
     permissions:
       id-token: write
     steps:

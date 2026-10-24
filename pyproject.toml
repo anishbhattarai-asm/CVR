@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-video-renderer"
+name = "pycvr"
 dynamic = ["version"]
 description = "Turn source code into a typewriter-style video, rendered in your real VS Code colour theme."
 readme = "README.md"

@@ -32,10 +32,10 @@ or a Python library you can build on.
 Python 3.9 or newer.
 
 ```
-pip install code-video-renderer
+pip install pycvr
 ```
 
-The package is called `code-video-renderer` on PyPI; you import it as `cvr` and run it as `cvr`.
+The package is called `pycvr` on PyPI; you import it as `cvr` and run it as `cvr`.
 
 For the latest code from GitHub instead:
 
@@ -256,7 +256,7 @@ Windows Media Player cannot open H.264 4:4:4 and reports "unsupported encoding s
 option off if you need a file it will play.
 
 Both modes need ffmpeg, which `imageio-ffmpeg` provides. If neither it nor a system ffmpeg is
-available, CVR falls back to OpenCV (`pip install "code-video-renderer[opencv]"`), which shifts
+available, CVR falls back to OpenCV (`pip install "pycvr[opencv]"`), which shifts
 dark tones slightly.
 
 ## How theme loading works
