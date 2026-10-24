@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.1.0 (2026-10-24)
 
 First release as an installable package. The rendered frames are pixel for pixel what the single
 `CVR.py` produced, apart from the line number and highlighting changes below.

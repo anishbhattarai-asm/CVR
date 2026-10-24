@@ -2,7 +2,7 @@
 
 Turn a source file into a typewriter style video, rendered in your real VS Code colour theme.
 
-![A Python file being typed out in the Dark 2026 theme](docs/demo.gif)
+![A Python file being typed out in the Dark 2026 theme](https://raw.githubusercontent.com/anishbhattarai-asm/CVR/main/docs/demo.gif)
 
 CVR reads the themes VS Code has installed on your machine, resolves their colours the same way
 VS Code does, and paints every frame with them. The result is a video that looks like your editor,
@@ -30,6 +30,14 @@ or a Python library you can build on.
 ## Install
 
 Python 3.9 or newer.
+
+```
+pip install code-video-renderer
+```
+
+The package is called `code-video-renderer` on PyPI; you import it as `cvr` and run it as `cvr`.
+
+For the latest code from GitHub instead:
 
 ```
 pip install git+https://github.com/anishbhattarai-asm/CVR
@@ -60,7 +68,7 @@ cvr
 `cvr-gui` does the same without a console window, and from a clone without installing,
 `pip install -r requirements.txt` then `python CVR.py`.
 
-![The CVR app with the theme list and live preview](docs/app.png)
+![The CVR app with the theme list and live preview](https://raw.githubusercontent.com/anishbhattarai-asm/CVR/main/docs/app.png)
 
 1. **File**: pick the source file and where the video should go.
 2. **Theme**: choose a colour theme. The preview updates as you select.
@@ -202,7 +210,7 @@ frames = [Image.fromarray(f) for f in r.frames()]
 frames[0].save("app.gif", save_all=True, append_images=frames[1:], duration=50, loop=0)
 ```
 
-[`examples/to_gif.py`](examples/to_gif.py) is the script that made the GIF at the top of this page.
+[`examples/to_gif.py`](https://github.com/anishbhattarai-asm/CVR/blob/main/examples/to_gif.py) is the script that made the GIF at the top of this page.
 
 ### Themes and palettes
 
@@ -230,7 +238,7 @@ The library reports through the standard `logging` module under the `cvr` logger
 nothing by itself. `logging.basicConfig(level=logging.INFO)` shows the timing each render settles
 on.
 
-[`examples/basic.py`](examples/basic.py) walks through the common cases.
+[`examples/basic.py`](https://github.com/anishbhattarai-asm/CVR/blob/main/examples/basic.py) walks through the common cases.
 
 ## Colour accuracy
 
@@ -309,4 +317,4 @@ Tkinter or OpenCV are skipped when those are missing.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/anishbhattarai-asm/CVR/blob/main/LICENSE).
