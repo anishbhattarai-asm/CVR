@@ -1,0 +1,5 @@
+# Only needed to run from a checkout (python CVR.py). `pip install .` reads pyproject.toml.
+numpy>=1.21
+pillow>=9.2
+pygments>=2.10
+imageio-ffmpeg>=0.4.7
