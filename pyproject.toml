@@ -46,6 +46,8 @@ cvr-gui = "cvr.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/anishbhattarai-asm/CVR"
+Source = "https://github.com/anishbhattarai-asm/CVR"
+Changelog = "https://github.com/anishbhattarai-asm/CVR/blob/main/CHANGELOG.md"
 Issues = "https://github.com/anishbhattarai-asm/CVR/issues"
 
 [tool.setuptools.dynamic]

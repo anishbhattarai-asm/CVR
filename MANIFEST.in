@@ -1,0 +1,4 @@
+# Extra files for the source distribution, so its tests run and examples ship.
+include CHANGELOG.md
+recursive-include tests *.py
+recursive-include examples *.py
