@@ -19,7 +19,7 @@ First release as an installable package. The rendered frames are pixel for pixel
 
 * The code is split into modules under `src/cvr/`. `python CVR.py` still opens the app.
 * ffmpeg now comes with the package through `imageio-ffmpeg`, so exact theme colours work without
-  installing anything else. OpenCV is optional (`pip install code-video-renderer[opencv]`).
+  installing anything else. OpenCV is optional (`pip install pycvr[opencv]`).
 * App settings live in the user config folder (`%APPDATA%\cvr`, `~/Library/Application Support/cvr`
   or `~/.config/cvr`). An existing `typewriter_settings.json` is picked up on first launch.
 * Line numbers appear as each line is typed, instead of the whole gutter being numbered from
